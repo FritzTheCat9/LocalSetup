@@ -1,7 +1,7 @@
 ﻿using Azure.Identity;
 using Azure.ResourceManager;
-using Azure.ResourceManager.AppService;
 using Azure.ResourceManager.Resources;
+using Azure.ResourceManager.AppService;
 using Azure.Security.KeyVault.Secrets;
 
 namespace LocalSetup.CLI;
@@ -9,47 +9,47 @@ namespace LocalSetup.CLI;
 public static class AzureLoginService
 {
     public static ArmClient GetClient()
-    {
-        var credential = new DefaultAzureCredential();
+        => new ArmClient(new DefaultAzureCredential());
 
-        return new ArmClient(credential);
-    }
-
-    public static async Task<List<WebSiteResource>> DiscoverFunctionApps(
-        ResourceGroupResource rg)
+    public static async Task<List<WebSiteResource>> DiscoverFunctionApps(ResourceGroupResource rg)
     {
         var list = new List<WebSiteResource>();
 
         await foreach (var site in rg.GetWebSites().GetAllAsync())
         {
             if (site.Data.Kind?.Contains("functionapp") == true)
-            {
                 list.Add(site);
-            }
         }
 
         return list;
     }
 
+    // Fetch all settings in parallel with throttling to avoid rate limits
     public static async Task<List<FunctionAppConfig>> FetchConfigs(List<WebSiteResource> apps)
     {
+        var throttler = new SemaphoreSlim(5); // max 5 concurrent requests
         var tasks = apps.Select(async app =>
         {
-            var response = await app.GetApplicationSettingsAsync();
-
-            var settings = response.Value.Properties
-                .ToDictionary(x => x.Key, x => x.Value);
-
-            return new FunctionAppConfig
+            await throttler.WaitAsync();
+            try
             {
-                Name = app.Data.Name,
-                Settings = settings
-            };
+                var response = await app.GetApplicationSettingsAsync();
+                return new FunctionAppConfig
+                {
+                    Name = app.Data.Name,
+                    Settings = new Dictionary<string, string>(response.Value.Properties)
+                };
+            }
+            finally
+            {
+                throttler.Release();
+            }
         });
 
         return (await Task.WhenAll(tasks)).ToList();
     }
 
+    // Resolve KeyVault references
     public static async Task<string> Resolve(string value)
     {
         if (!value.StartsWith("@Microsoft.KeyVault"))
@@ -64,7 +64,6 @@ public static class AzureLoginService
         var secretName = uri.Segments.Last();
 
         var secret = await client.GetSecretAsync(secretName);
-
         return secret.Value.Value;
     }
 
@@ -72,9 +71,6 @@ public static class AzureLoginService
     {
         var start = keyVaultReference.IndexOf("SecretUri=") + "SecretUri=".Length;
         var end = keyVaultReference.IndexOf(")", start);
-
-        var uri = keyVaultReference.Substring(start, end - start);
-
-        return new Uri(uri);
+        return new Uri(keyVaultReference.Substring(start, end - start));
     }
 }

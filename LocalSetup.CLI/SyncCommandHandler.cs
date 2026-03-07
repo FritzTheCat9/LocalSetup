@@ -9,35 +9,33 @@ public class SyncCommandHandler
         var client = AzureLoginService.GetClient();
         var subscription = await client.GetDefaultSubscriptionAsync();
         var rg = await subscription.GetResourceGroups().GetAsync(environment);
+
         var apps = await AzureLoginService.DiscoverFunctionApps(rg.Value);
         var configs = await AzureLoginService.FetchConfigs(apps);
 
         if (resolveKv)
         {
-            foreach (var app in configs)
+            // resolve KeyVault secrets in parallel
+            var tasks = configs.Select(async app =>
             {
                 foreach (var key in app.Settings.Keys.ToList())
-                {
-                    app.Settings[key] =
-                        await AzureLoginService.Resolve(app.Settings[key]);
-                }
-            }
+                    app.Settings[key] = await AzureLoginService.Resolve(app.Settings[key]);
+            });
+
+            await Task.WhenAll(tasks);
         }
 
+        // Generate files
         EnvGenerator.Generate(configs);
 
-        // merge all settings
-        var merged = configs
-            .SelectMany(x => x.Settings)
-            .ToDictionary(x => x.Key, x => x.Value);
+        // merge all settings for local.settings.json
+        var merged = configs.SelectMany(c => c.Settings)
+                            .ToDictionary(kv => kv.Key, kv => kv.Value);
 
-        // generate local.settings.json
         LocalSettingsGenerator.Generate(merged);
 
-        // optional: per-function settings
+        // optional: per-function files
         foreach (var app in configs)
-        {
             LocalSettingsGenerator.GeneratePerFunction(app);
-        }
     }
 }
