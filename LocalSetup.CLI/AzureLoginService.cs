@@ -9,7 +9,10 @@ namespace LocalSetup.CLI;
 public static class AzureLoginService
 {
     public static ArmClient GetClient()
-        => new ArmClient(new DefaultAzureCredential());
+    {
+        var credential = new AzureCliCredential();
+        return new ArmClient(credential);
+    }
 
     public static async Task<List<WebSiteResource>> DiscoverFunctionApps(ResourceGroupResource rg)
     {
