@@ -73,4 +73,46 @@ public static class AzureLoginService
         var end = keyVaultReference.IndexOf(")", start);
         return new Uri(keyVaultReference.Substring(start, end - start));
     }
+
+    public static async Task<List<FunctionAppResource>> DiscoverAllFunctionApps()
+    {
+        var client = GetClient();
+        var result = new List<FunctionAppResource>();
+
+        await foreach (var sub in client.GetSubscriptions().GetAllAsync())
+        {
+            await foreach (var rg in sub.GetResourceGroups().GetAllAsync())
+            {
+                var apps = await DiscoverFunctionApps(rg);
+
+                result.AddRange(apps.Select(a => new FunctionAppResource
+                {
+                    Name = a.Data.Name,
+                    ResourceGroup = rg.Data.Name
+                }));
+            }
+        }
+
+        return result;
+    }
+
+    public static async Task<List<WebSiteResource>> GetWebApps(List<FunctionAppResource> apps)
+    {
+        var client = AzureLoginService.GetClient();
+        var result = new List<WebSiteResource>();
+
+        await foreach (var sub in client.GetSubscriptions().GetAllAsync())
+        {
+            await foreach (var rg in sub.GetResourceGroups().GetAllAsync())
+            {
+                await foreach (var site in rg.GetWebSites().GetAllAsync())
+                {
+                    if (site.Data.Kind?.Contains("functionapp") == true)
+                        result.Add(site);
+                }
+            }
+        }
+
+        return result;
+    }
 }
