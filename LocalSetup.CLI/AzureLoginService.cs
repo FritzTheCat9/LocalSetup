@@ -9,7 +9,23 @@ namespace LocalSetup.CLI;
 public static class AzureLoginService
 {
     public static ArmClient GetClient()
-        => new ArmClient(new DefaultAzureCredential());
+    {
+        var credential = new AzureCliCredential();
+        return new ArmClient(credential);
+    }
+
+    private static readonly Dictionary<string, SecretClient> _clients = [];
+
+    private static SecretClient GetClient(Uri vaultUri)
+    {
+        if (!_clients.TryGetValue(vaultUri.Host, out var client))
+        {
+            client = new SecretClient(vaultUri, new AzureCliCredential());
+            _clients[vaultUri.Host] = client;
+        }
+
+        return client;
+    }
 
     public static async Task<List<WebSiteResource>> DiscoverFunctionApps(ResourceGroupResource rg)
     {
@@ -55,23 +71,43 @@ public static class AzureLoginService
         if (!value.StartsWith("@Microsoft.KeyVault"))
             return value;
 
-        var uri = ExtractSecretUri(value);
+        var (vaultUri, secretName) = ExtractSecretInfo(value);
 
-        var client = new SecretClient(
-            new Uri(uri.GetLeftPart(UriPartial.Authority)),
-            new DefaultAzureCredential());
-
-        var secretName = uri.Segments.Last();
+        var client = GetClient(vaultUri);
 
         var secret = await client.GetSecretAsync(secretName);
+
         return secret.Value.Value;
     }
 
-    private static Uri ExtractSecretUri(string keyVaultReference)
+    private static (Uri vaultUri, string secretName) ExtractSecretInfo(string keyVaultReference)
     {
-        var start = keyVaultReference.IndexOf("SecretUri=") + "SecretUri=".Length;
-        var end = keyVaultReference.IndexOf(")", start);
-        return new Uri(keyVaultReference.Substring(start, end - start));
+        var contentStart = keyVaultReference.IndexOf("(") + 1;
+        var contentEnd = keyVaultReference.IndexOf(")", contentStart);
+        var content = keyVaultReference.Substring(contentStart, contentEnd - contentStart);
+
+        var parts = content.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                           .Select(p => p.Split('=', 2))
+                           .ToDictionary(p => p[0], p => p[1]);
+
+        // Format 1: SecretUri
+        if (parts.ContainsKey("SecretUri"))
+        {
+            var uri = new Uri(parts["SecretUri"]);
+            var vaultUri = new Uri(uri.GetLeftPart(UriPartial.Authority));
+            var secretName = uri.Segments.Last();
+            return (vaultUri, secretName);
+        }
+
+        // Format 2: VaultName + SecretName
+        if (parts.ContainsKey("VaultName") && parts.ContainsKey("SecretName"))
+        {
+            var vaultUri = new Uri($"https://{parts["VaultName"]}.vault.azure.net/");
+            var secretName = parts["SecretName"];
+            return (vaultUri, secretName);
+        }
+
+        throw new InvalidOperationException("Unsupported KeyVault reference format");
     }
 
     public static async Task<List<FunctionAppResource>> DiscoverAllFunctionApps()
