@@ -8,7 +8,7 @@ public static class MappingBuilder
 
         foreach (var app in apps)
         {
-            var (env, logicalName) = EnvironmentParser.Parse(app.ResourceGroup);
+            var (env, logicalName) = EnvironmentParser.Resolve(app.ResourceGroup);
 
             if (!dict.TryGetValue(logicalName, out var mapping))
             {
@@ -31,13 +31,10 @@ public static class MappingBuilder
 
         foreach (var app in configs)
         {
-            var settings = app.Settings;
-
-            if (!settings.TryGetValue("ASPNETCORE_ENVIRONMENT", out var env))
-                env = "unknown";
-
-            if (!settings.TryGetValue("APP_NAME", out var appName))
-                appName = app.Name; // fallback
+            var (env, appName) = EnvironmentParser.Resolve(
+                app.ResourceGroup,
+                app.Settings
+            );
 
             if (!dict.TryGetValue(appName, out var mapping))
             {

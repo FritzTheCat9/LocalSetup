@@ -53,6 +53,7 @@ public static class AzureLoginService
                 return new FunctionAppConfig
                 {
                     Name = app.Data.Name,
+                    ResourceGroup = app.Id.ResourceGroupName,
                     Settings = new Dictionary<string, string>(response.Value.Properties)
                 };
             }

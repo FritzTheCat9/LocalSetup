@@ -1,14 +1,33 @@
-﻿namespace LocalSetup.CLI;
+﻿using System.Text.RegularExpressions;
+
+namespace LocalSetup.CLI;
 
 public static class EnvironmentParser
 {
-    public static (string env, string app) Parse(string rg)
+    public static (string env, string app) Resolve(
+        string rg,
+        IDictionary<string, string>? settings = null)
     {
-        var parts = rg.Split('-', 2);
+        // 1. AppSettings (best)
+        if (settings != null &&
+            settings.TryGetValue("ASPNETCORE_ENVIRONMENT", out var env) &&
+            settings.TryGetValue("APP_NAME", out var app))
+        {
+            return (env.ToLower(), app);
+        }
 
-        if (parts.Length < 2)
-            return ("unknown", rg);
+        // 2. Regex fallback
+        var match = Regex.Match(rg, @"\b(dev|stage|prod)\b", RegexOptions.IgnoreCase);
 
-        return (parts[0].ToLower(), parts[1]);
+        if (match.Success)
+        {
+            var foundEnv = match.Value.ToLower();
+            var appName = rg.Replace(foundEnv, "").Trim('-');
+
+            return (foundEnv, appName);
+        }
+
+        // 3. Last fallback
+        return ("unknown", rg);
     }
 }
